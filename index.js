@@ -16,8 +16,6 @@ require('dotenv').config();
 const DEVNET_URL = 'https://devnet.sonic.game/';
 const connection = new Connection(DEVNET_URL, 'confirmed');
 const keypairs = [];
-let autoOpenMysteryBox = false;
-let claimDailyMilestones = false;
 
 async function sendSol(fromKeypair, toPublicKey, amount) {
   const transaction = new Transaction().add(
@@ -110,115 +108,111 @@ async function main() {
           amountToSend = Math.max(0.001, Math.min(amountToSend, 0.1));
         }
 
-        rl.question('Auto Open Mystery Box? (yes/no): ', async (autoOpenInput) => {
-          autoOpenMysteryBox = autoOpenInput.toLowerCase() === 'yes';
+        const seedPhrases = parseEnvArray(process.env.SEED_PHRASES);
+        const privateKeys = parseEnvArray(process.env.PRIVATE_KEYS);
 
-          rl.question('Claim daily milestones? (yes/no): ', async (claimMilestonesInput) => {
-            claimDailyMilestones = claimMilestonesInput.toLowerCase() === 'yes';
+        for (const seedPhrase of seedPhrases) {
+          keypairs.push(await getKeypairFromSeed(seedPhrase));
+        }
 
-            const seedPhrases = parseEnvArray(process.env.SEED_PHRASES);
-            const privateKeys = parseEnvArray(process.env.PRIVATE_KEYS);
+        for (const privateKey of privateKeys) {
+          keypairs.push(getKeypairFromPrivateKey(privateKey));
+        }
 
-            for (const seedPhrase of seedPhrases) {
-              keypairs.push(await getKeypairFromSeed(seedPhrase));
-            }
+        if (keypairs.length === 0) {
+          throw new Error('No valid SEED_PHRASES or PRIVATE_KEYS found in the .env file');
+        }
 
-            for (const privateKey of privateKeys) {
-              keypairs.push(getKeypairFromPrivateKey(privateKey));
-            }
+        const randomAddresses = generateRandomAddresses(keypairs.length * transactionsPerKeypair);
+        console.log(`Generated ${keypairs.length * transactionsPerKeypair} recipient addresses\n`);
 
-            if (keypairs.length === 0) {
-              throw new Error('No valid SEED_PHRASES or PRIVATE_KEYS found in the .env file');
-            }
+        const delayBetweenAccounts = 15000; // delay antara akun
+        const delayBetweenCycles = 24 * 60 * 60 * 1000; // 24 jam
+        const delayBetweenTransactionsMs = delayBetweenTransactions; // delay antara transaksi dalam milidetik
 
-            const randomAddresses = generateRandomAddresses(keypairs.length * transactionsPerKeypair);
-            console.log(`Generated ${keypairs.length * transactionsPerKeypair} recipient addresses\n`);
+        async function processTransactions() {
+          for (let currentKeypairIndex = 0; currentKeypairIndex < keypairs.length; currentKeypairIndex++) {
+            const keypair = keypairs[currentKeypairIndex];
+            console.log(`======\n\x1b[32mAkun ${currentKeypairIndex + 1} | ${keypair.publicKey.toString()}\x1b[0m\n`);
 
-            const delayBetweenAccounts = 15000; // delay antara akun
-            const delayBetweenCycles = 24 * 60 * 60 * 1000; // 24 jam
-            const delayBetweenTransactionsMs = delayBetweenTransactions; // delay antara transaksi dalam milidetik
+            let successCount = 0;
+            for (let i = 1; i <= transactionsPerKeypair; i++) {
+              const address = randomAddresses[(currentKeypairIndex * transactionsPerKeypair) + i - 1];
+              const toPublicKey = new PublicKey(address);
 
-            async function processTransactions() {
-              for (let currentKeypairIndex = 0; currentKeypairIndex < keypairs.length; currentKeypairIndex++) {
-                const keypair = keypairs[currentKeypairIndex];
-                console.log(`======\n\x1b[32mAkun ${currentKeypairIndex + 1} | ${keypair.publicKey.toString()}\x1b[0m\n`);
-
-                let successCount = 0;
-                for (let i = 1; i <= transactionsPerKeypair; i++) {
-                  const address = randomAddresses[(currentKeypairIndex * transactionsPerKeypair) + i - 1];
-                  const toPublicKey = new PublicKey(address);
-
-                  try {
-                    await sendSol(keypair, toPublicKey, amountToSend);
-                    successCount++;
-                    process.stdout.clearLine();
-                    process.stdout.cursorTo(0);
-                    process.stdout.write(`Transaksi berhasil: ${successCount}/${transactionsPerKeypair}`);
-                  } catch (error) {
-                    console.error(`Failed to send SOL:`, error);
-                  }
-
-                  await delay(delayBetweenTransactionsMs); // Jeda antara transaksi
-                }
-
-                if (currentKeypairIndex < keypairs.length - 1) {
-                  await countdownTimer(delayBetweenAccounts / 1000, false); // Countdown ke akun berikutnya
-                } else {
-                  console.log('\n\n======');
-                  console.log('\x1b[34mSemua akun sudah diproses!\x1b[0m\n');
-                  await countdownTimer(delayBetweenCycles / 1000, true);
-                }
+              try {
+                await sendSol(keypair, toPublicKey, amountToSend);
+                successCount++;
+                process.stdout.clearLine();
+                process.stdout.cursorTo(0);
+                process.stdout.write(`Transaksi berhasil: ${successCount}/${transactionsPerKeypair}`);
+              } catch (error) {
+                console.error(`Failed to send SOL:`, error);
               }
+
+              await delay(delayBetweenTransactionsMs); // Jeda antara transaksi
             }
 
-            async function autoOpenMysteryBoxIfNeeded() {
-              if (autoOpenMysteryBox) {
-                console.log('\nMemulai auto open mystery box...\n');
-                // Tambahkan logika untuk auto open mystery box di sini
-                // Contoh: await openMysteryBox(keypair);
-              }
+            if (currentKeypairIndex < keypairs.length - 1) {
+              await countdownTimer(delayBetweenAccounts / 1000, false); // Countdown ke akun berikutnya
+            } else {
+              console.log('\n\n======');
+              console.log('\x1b[34mSemua akun sudah diproses!\x1b[0m\n');
+              await countdownTimer(delayBetweenCycles / 1000, true);
             }
+          }
+        }
 
-            async function claimDailyMilestonesIfNeeded() {
-              if (claimDailyMilestones) {
-                console.log('\nMengklaim daily milestones...\n');
-                // Tambahkan logika untuk claim daily milestones di sini
-                // Contoh: await claimMilestones(keypair);
-              }
-            }
+        await processTransactions();
 
-            await processTransactions();
-            await autoOpenMysteryBoxIfNeeded();
-            await claimDailyMilestonesIfNeeded();
-
-            rl.close();
-          });
-        });
+        rl.close();
       });
     });
   });
 }
 
-async function countdownTimer(seconds, final) {
-  for (let i = seconds; i > 0; i--) {
-    if (final) {
-      process.stdout.write(`\x1b[32mCountdown hingga berakhirnya siklus transaksi:\x1b[0m \x1b[34m${formatCountdown(i * 1000)}\x1b[0m detik...`);
+async function countdownTimer(seconds, isCycleCountdown) {
+  for (let i = seconds; i >= 0; i--) {
+    process.stdout.clearLine();
+    process.stdout.cursorTo(0);
+    if (isCycleCountdown) {
+      const countdown = formatCountdown(i * 1000);
+      process.stdout.write(`\x1b[33mSemua akun akan diproses ulang dalam: ${countdown}\x1b[0m`);
     } else {
-      process.stdout.write(`\x1b[32mCountdown hingga akun berikutnya:\x1b[0m \x1b[34m${formatCountdown(i * 1000)}\x1b[0m detik...`);
+      if (i === 0) {
+        process.stdout.write(`Lanjut ke akun berikutnya...`);
+      } else {
+        process.stdout.write(`Melanjutkan ke akun berikutnya dalam \x1b[31m${i}\x1b[0m detik...`);
+      }
     }
     await delay(1000);
   }
-  process.stdout.write('\n');
+  if (isCycleCountdown) {
+    console.log('\n');
+    main().catch((error) => {
+      console.error('Error:', error);
+      process.exit(1);
+    });
+  } else {
+    console.log('\n');
+  }
 }
 
-function formatCountdown(ms) {
-  const hours = Math.floor(ms / 3600000);
-  const minutes = Math.floor((ms % 3600000) / 60000);
-  const seconds = Math.floor((ms % 60000) / 1000);
-  return `${hours} jam ${minutes} menit ${seconds} detik`;
+function formatCountdown(milliseconds) {
+  const hours = Math.floor(milliseconds / (1000 * 60 * 60));
+  const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((milliseconds % (1000 * 60)) / 1000);
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
 }
 
-main().catch((err) => {
-  console.error(err);
+function pad(number) {
+  if (number < 10) {
+    return `0${number}`;
+  }
+  return `${number}`;
+}
+
+main().catch((error) => {
+  console.error('Error:', error);
   process.exit(1);
 });
