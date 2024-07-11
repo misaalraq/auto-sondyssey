@@ -22,7 +22,7 @@ async function sendSol(fromKeypair, toPublicKey, amount) {
     SystemProgram.transfer({
       fromPubkey: fromKeypair.publicKey,
       toPubkey: toPublicKey,
-      lamports: amount * LAMPORTS_PER_SOL,
+      lamports: amount, // Updated to directly use lamports amount
     })
   );
 
@@ -132,11 +132,10 @@ async function main() {
             const address = randomAddresses[(currentKeypairIndex * transactionsPerKeypair) + i - 1];
             const toPublicKey = new PublicKey(address);
 
-            // Generate a random amount between 0.001 and 0.0015 SOL
-            const amountToSend = Math.random() * (0.0015 - 0.001) + 0.001;
-
             try {
-              await sendSol(keypair, toPublicKey, amountToSend);
+              const randomAmount = Math.random() * 0.0005 + 0.001; // Generate random amount between 0.001 and 0.0015 SOL
+              const amountInLamports = Math.round(randomAmount * LAMPORTS_PER_SOL); // Convert to lamports and round to nearest integer
+              await sendSol(keypair, toPublicKey, amountInLamports);
               successCount++;
               process.stdout.clearLine();
               process.stdout.cursorTo(0);
@@ -196,14 +195,8 @@ function formatCountdown(milliseconds) {
   const hours = Math.floor(milliseconds / (1000 * 60 * 60));
   const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60));
   const seconds = Math.floor((milliseconds % (1000 * 60)) / 1000);
-  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
-}
 
-function pad(number) {
-  if (number < 10) {
-    return `0${number}`;
-  }
-  return number.toString();
+  return `${hours}h ${minutes}m ${seconds}s`;
 }
 
 main().catch((error) => {
