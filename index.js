@@ -100,73 +100,67 @@ async function main() {
       const delayInSeconds = parseInt(delayBetweenTransactionsInput) || 10;
       const delayBetweenTransactions = delayInSeconds * 1000;
 
-      rl.question('SOL per Tx (0.001-0.1): ', async (amountToSendInput) => {
-        let amountToSend = parseFloat(amountToSendInput);
-        if (isNaN(amountToSend)) {
-          amountToSend = 0.001;
-        } else {
-          amountToSend = Math.max(0.001, Math.min(amountToSend, 0.1));
-        }
+      const seedPhrases = parseEnvArray(process.env.SEED_PHRASES);
+      const privateKeys = parseEnvArray(process.env.PRIVATE_KEYS);
 
-        const seedPhrases = parseEnvArray(process.env.SEED_PHRASES);
-        const privateKeys = parseEnvArray(process.env.PRIVATE_KEYS);
+      for (const seedPhrase of seedPhrases) {
+        keypairs.push(await getKeypairFromSeed(seedPhrase));
+      }
 
-        for (const seedPhrase of seedPhrases) {
-          keypairs.push(await getKeypairFromSeed(seedPhrase));
-        }
+      for (const privateKey of privateKeys) {
+        keypairs.push(getKeypairFromPrivateKey(privateKey));
+      }
 
-        for (const privateKey of privateKeys) {
-          keypairs.push(getKeypairFromPrivateKey(privateKey));
-        }
+      if (keypairs.length === 0) {
+        throw new Error('No valid SEED_PHRASES or PRIVATE_KEYS found in the .env file');
+      }
 
-        if (keypairs.length === 0) {
-          throw new Error('No valid SEED_PHRASES or PRIVATE_KEYS found in the .env file');
-        }
+      const randomAddresses = generateRandomAddresses(keypairs.length * transactionsPerKeypair);
+      console.log(`Generated ${keypairs.length * transactionsPerKeypair} recipient addresses\n`);
 
-        const randomAddresses = generateRandomAddresses(keypairs.length * transactionsPerKeypair);
-        console.log(`Generated ${keypairs.length * transactionsPerKeypair} recipient addresses\n`);
+      const delayBetweenAccounts = 15000; // delay antara akun
+      const delayBetweenCycles = 24 * 60 * 60 * 1000; // 24 jam
+      const delayBetweenTransactionsMs = delayBetweenTransactions; // delay antara transaksi dalam milidetik
 
-        const delayBetweenAccounts = 15000; // delay antara akun
-        const delayBetweenCycles = 24 * 60 * 60 * 1000; // 24 jam
-        const delayBetweenTransactionsMs = delayBetweenTransactions; // delay antara transaksi dalam milidetik
+      async function processTransactions() {
+        for (let currentKeypairIndex = 0; currentKeypairIndex < keypairs.length; currentKeypairIndex++) {
+          const keypair = keypairs[currentKeypairIndex];
+          console.log(`======\n\x1b[32mAkun ${currentKeypairIndex + 1} | ${keypair.publicKey.toString()}\x1b[0m\n`);
 
-        async function processTransactions() {
-          for (let currentKeypairIndex = 0; currentKeypairIndex < keypairs.length; currentKeypairIndex++) {
-            const keypair = keypairs[currentKeypairIndex];
-            console.log(`======\n\x1b[32mAkun ${currentKeypairIndex + 1} | ${keypair.publicKey.toString()}\x1b[0m\n`);
+          let successCount = 0;
+          for (let i = 1; i <= transactionsPerKeypair; i++) {
+            const address = randomAddresses[(currentKeypairIndex * transactionsPerKeypair) + i - 1];
+            const toPublicKey = new PublicKey(address);
 
-            let successCount = 0;
-            for (let i = 1; i <= transactionsPerKeypair; i++) {
-              const address = randomAddresses[(currentKeypairIndex * transactionsPerKeypair) + i - 1];
-              const toPublicKey = new PublicKey(address);
+            // Generate a random amount between 0.001 and 0.0015 SOL
+            const amountToSend = Math.random() * (0.0015 - 0.001) + 0.001;
 
-              try {
-                await sendSol(keypair, toPublicKey, amountToSend);
-                successCount++;
-                process.stdout.clearLine();
-                process.stdout.cursorTo(0);
-                process.stdout.write(`Transaksi berhasil: ${successCount}/${transactionsPerKeypair}`);
-              } catch (error) {
-                console.error(`Failed to send SOL:`, error);
-              }
-
-              await delay(delayBetweenTransactionsMs); // Jeda antara transaksi
+            try {
+              await sendSol(keypair, toPublicKey, amountToSend);
+              successCount++;
+              process.stdout.clearLine();
+              process.stdout.cursorTo(0);
+              process.stdout.write(`Transaksi berhasil: ${successCount}/${transactionsPerKeypair}`);
+            } catch (error) {
+              console.error(`Failed to send SOL:`, error);
             }
 
-            if (currentKeypairIndex < keypairs.length - 1) {
-              await countdownTimer(delayBetweenAccounts / 1000, false); // Countdown ke akun berikutnya
-            } else {
-              console.log('\n\n======');
-              console.log('\x1b[34mSemua akun sudah diproses!\x1b[0m\n');
-              await countdownTimer(delayBetweenCycles / 1000, true);
-            }
+            await delay(delayBetweenTransactionsMs); // Jeda antara transaksi
+          }
+
+          if (currentKeypairIndex < keypairs.length - 1) {
+            await countdownTimer(delayBetweenAccounts / 1000, false); // Countdown ke akun berikutnya
+          } else {
+            console.log('\n\n======');
+            console.log('\x1b[34mSemua akun sudah diproses!\x1b[0m\n');
+            await countdownTimer(delayBetweenCycles / 1000, true);
           }
         }
+      }
 
-        await processTransactions();
+      await processTransactions();
 
-        rl.close();
-      });
+      rl.close();
     });
   });
 }
@@ -209,7 +203,7 @@ function pad(number) {
   if (number < 10) {
     return `0${number}`;
   }
-  return `${number}`;
+  return number.toString();
 }
 
 main().catch((error) => {
