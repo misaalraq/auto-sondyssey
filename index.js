@@ -11,13 +11,38 @@ const {
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
 const bs58 = require('bs58');
+const axios = require('axios');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 require('dotenv').config();
 
 const DEVNET_URL = 'https://devnet.sonic.game/';
 const connection = new Connection(DEVNET_URL, 'confirmed');
 const keypairs = [];
 
-async function sendSol(fromKeypair, toPublicKey, amount) {
+async function fetchProxies() {
+  const proxyUrls = [
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_anonymous/http.txt',
+    'https://raw.githubusercontent.com/Vann-Dev/proxy-list/main/proxies/http.txt',
+    'https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/http/global/http_checked.txt'
+  ];
+
+  const proxies = [];
+
+  for (const url of proxyUrls) {
+    try {
+      const response = await axios.get(url);
+      const proxyList = response.data.split('\n').filter(Boolean);
+      proxies.push(...proxyList);
+    } catch (error) {
+      console.error(`Failed to fetch proxies from ${url}:`, error);
+    }
+  }
+
+  return proxies;
+}
+
+async function sendSol(fromKeypair, toPublicKey, amount, proxy) {
   const transaction = new Transaction().add(
     SystemProgram.transfer({
       fromPubkey: fromKeypair.publicKey,
@@ -26,9 +51,25 @@ async function sendSol(fromKeypair, toPublicKey, amount) {
     })
   );
 
-  const signature = await sendAndConfirmTransaction(connection, transaction, [fromKeypair]);
-
-  return signature;
+  try {
+    const proxyAgent = new HttpsProxyAgent(`http://${proxy}`);
+    const signature = await sendAndConfirmTransaction(connection, transaction, [fromKeypair], {
+      commitment: 'confirmed',
+      preflightCommitment: 'confirmed',
+      skipPreflight: false,
+      preflightCommitment: 'max',
+      commitment: 'max',
+      preflightCommitment: 'confirmed',
+      agent: {
+        http: proxyAgent,
+        https: proxyAgent,
+      }
+    });
+    return signature;
+  } catch (error) {
+    console.error('Failed to send SOL:', error);
+    return null;
+  }
 }
 
 function generateRandomAddresses(count) {
@@ -122,6 +163,11 @@ async function main() {
       const delayBetweenCycles = 24 * 60 * 60 * 1000; // 24 jam
       const delayBetweenTransactionsMs = delayBetweenTransactions; // delay antara transaksi dalam milidetik
 
+      const proxies = await fetchProxies();
+      if (proxies.length === 0) {
+        throw new Error('No proxies available');
+      }
+
       async function processTransactions() {
         for (let currentKeypairIndex = 0; currentKeypairIndex < keypairs.length; currentKeypairIndex++) {
           const keypair = keypairs[currentKeypairIndex];
@@ -135,7 +181,11 @@ async function main() {
             try {
               const randomAmount = Math.random() * 0.0005 + 0.001; // Generate random amount between 0.001 and 0.0015 SOL
               const amountInLamports = Math.round(randomAmount * LAMPORTS_PER_SOL); // Convert to lamports and round to nearest integer
-              await sendSol(keypair, toPublicKey, amountInLamports);
+
+              // Pilih proxy secara acak
+              const proxy = proxies[Math.floor(Math.random() * proxies.length)];
+
+              await sendSol(keypair, toPublicKey, amountInLamports, proxy);
               successCount++;
               process.stdout.clearLine();
               process.stdout.cursorTo(0);
@@ -172,34 +222,24 @@ async function countdownTimer(seconds, isCycleCountdown) {
       const countdown = formatCountdown(i * 1000);
       process.stdout.write(`\x1b[33mSemua akun akan diproses ulang dalam: ${countdown}\x1b[0m`);
     } else {
-      if (i === 0) {
-        process.stdout.write(`Lanjut ke akun berikutnya...`);
-      } else {
-        process.stdout.write(`Melanjutkan ke akun berikutnya dalam \x1b[31m${i}\x1b[0m detik...`);
-      }
+      const countdown = formatCountdown(i * 1000);
+      process.stdout.write(`\x1b[33mPindah ke akun berikutnya dalam: ${countdown}\x1b[0m`);
     }
     await delay(1000);
   }
-  if (isCycleCountdown) {
-    console.log('\n');
-    main().catch((error) => {
-      console.error('Error:', error);
-      process.exit(1);
-    });
-  } else {
-    console.log('\n');
-  }
+  process.stdout.clearLine();
+  process.stdout.cursorTo(0);
 }
 
-function formatCountdown(milliseconds) {
-  const hours = Math.floor(milliseconds / (1000 * 60 * 60));
-  const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60));
-  const seconds = Math.floor((milliseconds % (1000 * 60)) / 1000);
+function formatCountdown(ms) {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
 
-  return `${hours}h ${minutes}m ${seconds}s`;
+  return `${hours.toString().padStart(2, '0')}:${(minutes % 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 }
 
-main().catch((error) => {
-  console.error('Error:', error);
+main().catch((err) => {
+  console.error(err);
   process.exit(1);
 });
